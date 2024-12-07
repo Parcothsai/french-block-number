@@ -7,7 +7,7 @@
 
 
 # Numéros français connus pour le spam
-0612345678
+
 
 # Préfixes de spam connus
 0897*
