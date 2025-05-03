@@ -15,3 +15,7 @@ https://github.com/oulixalt/BegoneListeFR
 ```sh
 https://www.numeroinconnu.fr/numero/0612345678
 ```
+
+```sh
+https://raw.githubusercontent.com/danroc/begone-fr-list/refs/heads/main/dist/begone-fr-tout.xml
+```
