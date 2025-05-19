@@ -1,0 +1,12 @@
+services:
+  blocked-numbers-app:
+    container_name: blocked-numbers-app
+    image: blocked-numbers-app:latest
+    working_dir: /usr/src/app
+    command: sh -c "npm install && node server.js"
+    ports:
+      - "127.0.0.1:8085:3000"
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    restart: always

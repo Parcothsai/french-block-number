@@ -1,0 +1,24 @@
+# Utiliser une image de base Node.js
+FROM node:18
+ENV TZ=Europe/Paris
+
+# Définir le répertoire de travail dans le conteneur
+WORKDIR /usr/src/app
+
+RUN mkdir uploads
+
+# Copier les fichiers package.json et package-lock.json
+COPY package*.json ./
+COPY public_key.pem ./
+# Installer les dépendances
+RUN npm install
+
+# Copier le reste des fichiers de l'application
+COPY . .
+RUN apt update -y && apt install sqlite3 -y
+
+# Exposer le port sur lequel l'application va écouter
+EXPOSE 3000
+
+# Commande pour démarrer l'application
+CMD ["node", "server.js"]
