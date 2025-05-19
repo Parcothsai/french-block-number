@@ -1,2 +1,3 @@
 /api_rest/public_keys
 /api_rest/uploads
+api_rest/.env_admin

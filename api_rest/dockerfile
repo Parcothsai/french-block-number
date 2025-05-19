@@ -9,7 +9,6 @@ RUN mkdir uploads
 
 # Copier les fichiers package.json et package-lock.json
 COPY package*.json ./
-COPY public_key.pem ./
 # Installer les dépendances
 RUN npm install
 

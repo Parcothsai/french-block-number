@@ -6,7 +6,7 @@ const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 const sqlite3 = require("sqlite3").verbose();
 const crypto = require("crypto");
-
+require("dotenv").config({ path: ".env_admin" });
 const app = express();
 const port = 3000;
 
@@ -259,63 +259,112 @@ app.post('/submit-blocked-numbers', authenticateSubmission, (req, res) => {
   });
 });
 
-app.get("/stats", authenticateSubmission, (req, res) => {
-  console.log("📊 Reçu /stats (authentifié) [debut=true]");
+const { promisify } = require("util");
+
+const cacheStats = {
+  data: null,
+  lastUpdated: 0,
+  ttl: 300 * 1000 // 300 secondes
+};
+
+// app.get("/stats", authenticateSubmission, async (req, res) => {
+app.get("/stats", async (req, res) => {
+  console.log("📊 Reçu /stats [debut=true]");
+
+  const now = Date.now();
+  if (cacheStats.data && now - cacheStats.lastUpdated < cacheStats.ttl) {
+    console.log("⚡️ Cache stats utilisé");
+    return jsonResponse(res, 200, true, "Statistiques récupérées (cache)", cacheStats.data);
+  }
+
+  const getAsync = promisify(db.get.bind(db));
+  const allAsync = promisify(db.all.bind(db));
 
   const stats = {};
 
-  db.serialize(() => {
-    db.get(`SELECT COUNT(*) AS total_users FROM ApiKeys`, (err, row1) => {
-      if (err) return jsonResponse(res, 500, false, "Erreur stats utilisateurs");
-      stats.totalUsers = row1.total_users;
+  try {
+    const totalUsersRow = await getAsync(`SELECT COUNT(*) AS total_users FROM ApiKeys`);
+    stats.totalUsers = totalUsersRow.total_users;
 
-      db.get(`SELECT COUNT(*) AS total_blocked_entries FROM PhoneNumberEntries`, (err2, row2) => {
-        if (err2) return jsonResponse(res, 500, false, "Erreur stats entrées bloquées");
-        stats.totalBlockedEntries = row2.total_blocked_entries;
+    const totalBlockedRow = await getAsync(`SELECT COUNT(*) AS total_blocked_entries FROM PhoneNumberEntries`);
+    stats.totalBlockedEntries = totalBlockedRow.total_blocked_entries;
 
-        db.get(`SELECT COUNT(*) AS total_unique_blocked_numbers FROM BlockedNumbersCount`, (err3, row3) => {
-          if (err3) return jsonResponse(res, 500, false, "Erreur stats numéros uniques");
-          stats.totalUniqueBlockedNumbers = row3.total_unique_blocked_numbers;
+    const uniqueBlockedRow = await getAsync(`SELECT COUNT(*) AS total_unique_blocked_numbers FROM BlockedNumbersCount`);
+    stats.totalUniqueBlockedNumbers = uniqueBlockedRow.total_unique_blocked_numbers;
 
-          db.all(`
-            SELECT phone_number, count 
-            FROM BlockedNumbersCount 
-            ORDER BY count DESC 
-            LIMIT 5
-          `, (err4, topNumbers) => {
-            if (err4) return jsonResponse(res, 500, false, "Erreur stats top numéros");
-            stats.topBlockedNumbers = topNumbers;
+    const topNumbers = await allAsync(`
+      SELECT phone_number, count 
+      FROM BlockedNumbersCount 
+      ORDER BY count DESC 
+      LIMIT 5
+    `);
+    stats.topBlockedNumbers = topNumbers;
 
-            db.get(`
-              SELECT COUNT(*) * 1.0 / (SELECT COUNT(*) FROM ApiKeys) AS avg_submissions_per_user
-              FROM PhoneNumberEntries
-            `, (err5, avgRow) => {
-              if (err5) return jsonResponse(res, 500, false, "Erreur stats moyenne");
-              stats.averageSubmissionsPerUser = parseFloat((avgRow?.avg_submissions_per_user || 0).toFixed(2));
+    const avgRow = await getAsync(`
+      SELECT COUNT(*) * 1.0 / (SELECT COUNT(*) FROM ApiKeys) AS avg_submissions_per_user
+      FROM PhoneNumberEntries
+    `);
+    stats.averageSubmissionsPerUser = parseFloat((avgRow?.avg_submissions_per_user || 0).toFixed(2));
 
-              jsonResponse(res, 200, true, "Statistiques récupérées", stats);
-            });
-          });
-        });
-      });
+    // Cache les données
+    const retrievedAt = getParisTimestamp();
+    stats.retrievedAt = retrievedAt;
+    cacheStats.data = stats;
+    cacheStats.lastUpdated = Date.now();
+
+    jsonResponse(res, 200, true, "Statistiques récupérées", {
+      ...stats,
+      retrievedAt: getParisTimestamp()
     });
-  });
+  } catch (err) {
+    console.error("❌ Erreur récupération stats :", err);
+    jsonResponse(res, 500, false, "Erreur lors de la récupération des statistiques");
+  }
 });
 
 // Fonction pour obtenir l'heure de Paris au format ISO
 function getParisTimestamp() {
   const date = new Date();
-  return new Intl.DateTimeFormat('fr-FR', {
+  const formatter = new Intl.DateTimeFormat('fr-FR', {
     timeZone: 'Europe/Paris',
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
     day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
     hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  }).format(date).replace(/(\d{2})\/(\d{2})\/(\d{4}),? /, '$3-$2-$1T').replace(',', '') + '+01:00'; // Note : l'heure d'été/hiver n’est pas gérée dynamiquement ici
+    minute: '2-digit'
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type) => parts.find(p => p.type === type)?.value;
+  return `${get('day')}/${get('month')}/${get('year')} à ${get('hour')}:${get('minute')}`;
 }
+
+
+const authenticateAdmin = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="Admin Area"');
+    return res.status(401).send("Authentification requise");
+  }
+
+  const base64Credentials = authHeader.split(" ")[1];
+  const credentials = Buffer.from(base64Credentials, "base64").toString("ascii");
+  const [username, password] = credentials.split(":");
+
+  const validUser = process.env.ADMIN_USER;
+  const validPass = process.env.ADMIN_PASSWORD;
+
+  if (username === validUser && password === validPass) {
+    return next();
+  }
+
+  res.status(403).send("Accès interdit");
+};
+
+app.get("/admin/invalidate-cache", authenticateAdmin, (req, res) => {
+  cacheStats.data = null;
+  cacheStats.lastUpdated = 0;
+  res.send("🧹 Cache stats invalidé");
+});
 
 // Route de vérification (JSON)
 app.get('/health', (req, res) => {
